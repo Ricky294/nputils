@@ -28,10 +28,10 @@ def to_array(x, /, dtype: object = None):
     >>> to_array({"5": 10, "6": 12}, dtype=float)
     array([10., 12.])
 
-    >>> to_array(pd.DataFrame({"x": [1, 3, 5], "y": [2, 4, 6]}), dtype=np.float32)
+    >>> to_array(pd.DataFrame({"x": [1, 3, 5], "y": [2, 4, 6]}), dtype=float)
     array([[1., 2.],
            [3., 4.],
-           [5., 6.]], dtype=float32)
+           [5., 6.]])
     """
 
     if isinstance(x, np.ndarray):
@@ -48,16 +48,16 @@ def to_array(x, /, dtype: object = None):
     return np.array([x], dtype=dtype)
 
 
-def local_min(x: np.ndarray, /, period: int):
+def min_over_period(x: np.ndarray, /, period: int):
     """
-    Returns the minimum values on `x` with lookback `period` using a sliding window.
+    Returns the minimum values on `x` with lookback `period`.
 
     :param x: 1D iterable
     :param period: lookback period
     :return: numpy array
 
     :examples:
-    >>> local_min(np.array([1, 2, 3, 4, 2, 1, 5, 3]), period=3)
+    >>> min_over_period(np.array([1, 2, 3, 4, 2, 1, 5, 3]), period=3)
     array([1, 1, 1, 2, 2, 1, 1, 1])
     """
     window = np.lib.stride_tricks.sliding_window_view(x, period)
@@ -68,16 +68,16 @@ def local_min(x: np.ndarray, /, period: int):
     )
 
 
-def local_max(x: np.ndarray, /, period: int):
+def max_over_period(x: np.ndarray, /, period: int):
     """
-    Returns the maximum values on `x` with lookback `period` using a sliding window.
+    Returns the maximum values on `x` with lookback `period`.
 
     :param x: 1D iterable
     :param period: lookback period
     :return: numpy array
 
     :examples:
-    >>> local_max(np.array([1, 2, 3, 4, 2, 1, 5, 3]), period=3)
+    >>> max_over_period(np.array([1, 2, 3, 4, 2, 1, 5, 3]), period=3)
     array([1, 2, 3, 4, 4, 4, 5, 5])
     """
 
@@ -89,7 +89,120 @@ def local_max(x: np.ndarray, /, period: int):
     )
 
 
-def normalize_0_1(x: np.ndarray, /):
+def absolute_change(x: np.ndarray, /) -> np.ndarray | float | int:
+    """
+    Returns the array's absolute change.
+
+    :param x: numpy array with any dimension
+    :return: constant (x has 1 dim) or numpy array (x has multiple dims)
+
+    :examples:
+    >>> absolute_change(np.array([1, 2, 3, -1]))
+    6
+
+    >>> absolute_change(np.array([[1, 2, 3, -1], [2, 1, 4, 1]]))
+    array([6, 7])
+    """
+    abs_changes = np.abs(x[..., :-1] - x[..., 1:])
+    return np.sum(abs_changes, axis=-1)
+
+
+def sum_increase(x: np.ndarray, /) -> np.ndarray | float | int:
+    """
+    Sums differences between elements where value is greater than previous.
+
+    :param x: numpy array with any number of dims
+    :return: constant (x has 1 dim) or numpy array (x has multiple dims)
+
+    :examples:
+    >>> sum_increase(np.array([2, 3, 4, 3, 1]))
+    2
+    >>> sum_increase(np.array([[2, 3, 4, 3, 1], [-2, 2, 0, 1, -1]]))
+    array([2, 5])
+    """
+    change = x[..., 1:] - x[..., :-1]
+    inc = np.where(change > 0, change, 0)
+    return np.sum(inc, axis=-1)
+
+
+def sum_decrease(x: np.ndarray, /):
+    """
+    Sums differences between elements where value is less than previous.
+
+    :param x: numpy array with any number of dims
+    :return: constant (x has 1 dim) or numpy array (x has multiple dims)
+
+    :examples:
+    >>> sum_decrease(np.array([2, 3, 4, 3, 1]))
+    3
+    >>> sum_decrease(np.array([[2, 3, 4, 3, 1], [-2, 2, 0, 1, -1]]))
+    array([3, 4])
+    """
+    change = x[..., 1:] - x[..., :-1]
+    dec = np.where(change < 0, change, 0)
+    return np.abs(np.sum(dec, axis=-1))
+
+
+def bottoms(x: np.ndarray, /, n=1):
+    """
+    Returns a boolean numpy array.
+    True where at least `n` consecutive value decreases before, and increases after a value.
+
+    :param x: 1d iterable
+    :param n: lookback and lookahead period
+    :return: boolean numpy array
+
+    :examples:
+    >>> a = np.array([1, 2, 3, 2, 1])
+    >>> bottoms(a, n=1)
+    array([False, False, False, False, False])
+
+    >>> b = np.array([2, 1, 3, 4, 3, 2])
+    >>> bottoms(b, n=1)
+    array([False,  True, False, False, False, False])
+
+    >>> bottoms(b, n=2)
+    array([False, False, False, False, False, False])
+    """
+
+    inc_arr = increase(x, n)
+    dec_arr = decrease(x, n)
+
+    dec_inc_arr = np.all(np.vstack((dec_arr[:-n], inc_arr[n:])), axis=0)
+    return np.concatenate((dec_inc_arr, np.full(n, False)))
+
+
+def peaks(x: np.ndarray, /, n=1):
+    """
+    Returns a boolean numpy array.
+    True where at least `n` consecutive value increases before, and decreases after a value.
+
+    :param x: 1d iterable
+    :param n: lookback and lookahead period
+    :return: boolean numpy array
+
+    :examples:
+    >>> a = np.array([1, 2, 1, 2, 3])
+    >>> peaks(a, n=1)
+    array([False,  True, False, False, False])
+
+    >>> a = np.array([1, 2, 1, 2, 3])
+    >>> peaks(a, n=2)
+    array([False, False, False, False, False])
+
+    >>> b = np.array([1, 2, 3, 2, 1])
+    >>> peaks(b, n=2)
+    array([False, False,  True, False, False])
+    """
+
+    inc_arr = increase(x, n)
+    dec_arr = decrease(x, n)
+
+    dec_inc_arr = np.all(np.vstack((dec_arr[n:], inc_arr[:-n])), axis=0)
+    return np.concatenate((dec_inc_arr, np.full(n, False)))
+
+
+def normalize(x: np.ndarray, /):
     """
     Normalizes values along all axes between 0 and 1.
 
@@ -98,11 +211,11 @@ def normalize_0_1(x: np.ndarray, /):
 
     :examples:
     >>> a = np.array([1, 2, 3])
-    >>> normalize_0_1(a)
+    >>> normalize(a)
     array([0. , 0.5, 1. ])
 
     >>> b = np.array([[1, 2, 3], [4, 5, 6]])
-    >>> normalize_0_1(b)
+    >>> normalize(b)
     array([[0. , 0.2, 0.4],
            [0.6, 0.8, 1. ]])
     """
@@ -194,85 +307,92 @@ def replace_with_previous_where(x: np.ndarray, condition: np.ndarray, /) -> np.n
     return x_copy[prev]
 
 
-def decrease(x: np.ndarray, /):
+def increase(x: np.ndarray, n=1) -> np.ndarray:
     """
-    Returns True where previous value is greater than next value.
+    Returns True where at least `n` consecutive value is increasing in `x`.
 
-    Similar method(s):
-        - consecutive_decrease
-
-    :param x: numpy array
+    :param x: numpy array with any number of dimensions
+    :param n: Required number of increasing values to get True
     :return: boolean numpy array
 
     :examples:
-    >>> decrease(np.array([1, 2, 3, 2, 1]))
-    array([False, False, False,  True,  True])
+    >>> a = np.array([1, 2, 1, 0, 1, 2])
+    >>> increase(a, 1)
+    array([False,  True, False, False,  True,  True])
+
+    >>> increase(a, 2)
+    array([False, False, False, False, False,  True])
+
+    >>> b = np.array([[1, 2, 1, 0, 1, 2],
+    ...               [1, 2, 3, 4, 3, 4]])
+    >>> increase(b, 2)
+    array([[False, False, False, False, False,  True],
+           [False, False,  True,  True, False, False]])
     """
-    return np.concatenate(([False], x[:-1] > x[1:]))
+
+    shape = list(x.shape[0:-1])
+    shape.append(n)
+    padding = np.full(shape, False)
+    inc = np.concatenate((padding, x[..., :-1] < x[..., 1:]), axis=-1)
+
+    if n == 1:
+        return inc
+
+    inc_window = np.lib.stride_tricks.sliding_window_view(inc, n, axis=-1)
+    return np.all(inc_window, axis=-1)
 
 
-def increase(x: np.ndarray, /):
+def decrease(x: np.ndarray, n=1) -> np.ndarray:
     """
-    Returns True where previous value is less than next value.
+    Returns True where at least `n` consecutive value is decreasing in `x`.
 
-    Similar method(s):
-        - consecutive_increase
-
-    :param x: numpy array
+    :param x: numpy array with any number of dimensions
+    :param n: Required number of decreasing values to get True
     :return: boolean numpy array
 
     :examples:
-    >>> increase(np.array([1, 2, 3, 2, 1]))
-    array([False,  True,  True, False, False])
+    >>> a = np.array([1, 2, 1, 0, 1, 2])
+    >>> decrease(a, 1)
+    array([False, False,  True,  True, False, False])
+
+    >>> decrease(a, 2)
+    array([False, False, False,  True, False, False])
+
+    >>> b = np.array([[1, 2, 1, 0, 1, 2],
+    ...               [4, 3, 4, 3, 2, 1]])
+    >>> decrease(b, 2)
+    array([[False, False, False,  True, False, False],
+           [False, False, False, False,  True,  True]])
     """
-    return np.concatenate(([False], x[:-1] < x[1:]))
+
+    shape = list(x.shape[0:-1])
+    shape.append(n)
+    padding = np.full(shape, False)
+    dec = np.concatenate((padding, x[..., :-1] > x[..., 1:]), axis=-1)
+
+    if n == 1:
+        return dec
+
+    dec_window = np.lib.stride_tricks.sliding_window_view(dec, n, axis=-1)
+    return np.all(dec_window, axis=-1)
 
 
-def consecutive_increase(x: np.ndarray, /, n: int):
+def change(x: np.ndarray, /):
     """
-    Returns True where at least `n` previous value is less than current value.
+    Substracts adjacent values in `x`.
 
-    Similar method(s):
-        - increase
-
-    :param x: numpy array
-    :param n: After at least this many consecutive increasing value returns True
-    :return: boolean numpy array
+    :param x: numeric numpy array
+    :return: numeric numpy array
 
     :examples:
-    >>> consecutive_increase(np.array([1, 2, 3, 4, 3, 2, 1]), n=3)
-    array([False, False, False,  True, False, False, False])
+    >>> change(np.array([5, 10, 9, 7]))
+    array([ 0,  5, -1, -2])
     """
 
-    inc = increase(x)
-    inc_window = np.lib.stride_tricks.sliding_window_view(inc, n)
-
-    return np.concatenate((np.full(n - 1, False), np.all(inc_window, axis=-1)))
+    return np.concatenate(([0], x[1:] - x[:-1]))
 
 
-def consecutive_decrease(x: np.ndarray, /, n: int):
-    """
-    Returns True where at least `n` previous value is greater than current value.
-
-    Similar method(s):
-        - decrease
-
-    :param x: numpy array
-    :param n: After at least this many consecutive decreasing value returns True
-    :return: boolean numpy array
-
-    :examples:
-    >>> consecutive_decrease(np.array([1, 2, 3, 4, 3, 2, 1]), n=3)
-    array([False, False, False, False, False, False,  True])
-    """
-
-    inc = decrease(x)
-    inc_window = np.lib.stride_tricks.sliding_window_view(inc, n)
-
-    return np.concatenate((np.full(n - 1, False), np.all(inc_window, axis=-1)))
-
-
-def shift(x: np.ndarray | Iterable | int | float, num: int, /, fill_value=np.nan, dtype=np.float):
+def shift(x: np.ndarray | Iterable | int | float, num: int, /, fill_value=np.nan, dtype=float):
     """
     Left or right shifts `x` by `num` and fills the shifter values with `fill_values`.
 
